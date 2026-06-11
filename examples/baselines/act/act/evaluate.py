@@ -50,15 +50,16 @@ def evaluate(n: int, agent, eval_envs, eval_kwargs):
             # for each env.
             if temporal_agg:
                 assert query_frequency == 1, "query_frequency != 1 has not been implemented for temporal_agg==1."
-                all_time_actions[:, ts, ts:ts+num_queries] = action_seq # (num_envs, num_queries, act_dim)
-                actions_for_curr_step = all_time_actions[:, :, ts] # (num_envs, max_timesteps, act_dim)
+                ts_safe = min(ts, max_timesteps - 1)  # guard against off-by-one from delayed truncation
+                all_time_actions[:, ts_safe, ts_safe:ts_safe+num_queries] = action_seq # (num_envs, num_queries, act_dim)
+                actions_for_curr_step = all_time_actions[:, :, ts_safe] # (num_envs, max_timesteps, act_dim)
                 # since we pad the action with 0 in 'delta_pos' control mode, this causes error.
                 #actions_populated = torch.all(actions_for_curr_step[0] != 0, axis=1) # (max_timesteps,)
                 actions_populated = torch.zeros(max_timesteps, dtype=torch.bool, device=device) # (max_timesteps,)
-                actions_populated[max(0, ts + 1 - num_queries):ts+1] = True
+                actions_populated[max(0, ts_safe + 1 - num_queries):ts_safe+1] = True
                 actions_for_curr_step = actions_for_curr_step[:, actions_populated] # (num_envs, num_populated, act_dim)
                 k = 0.01
-                if ts < num_queries:
+                if ts_safe < num_queries:
                     exp_weights = torch.exp(-k * torch.arange(len(actions_for_curr_step[0]), device=device)) # (num_populated,)
                     exp_weights = exp_weights / exp_weights.sum() # (num_populated,)
                     exp_weights = torch.tile(exp_weights, (num_envs, 1)) # (num_envs, num_populated)
@@ -78,15 +79,19 @@ def evaluate(n: int, agent, eval_envs, eval_kwargs):
             ts += 1
 
             # collect episode info
-            if truncated.any():
+            if truncated.any() or ts >= max_timesteps:
                 assert truncated.all() == truncated.any(), "all episodes should truncate at the same time for fair evaluation with other algorithms"
-                if isinstance(info["final_info"], dict):
-                    for k, v in info["final_info"]["episode"].items():
-                        eval_metrics[k].append(v.float().cpu().numpy())
-                else:
-                    for final_info in info["final_info"]:
-                        for k, v in final_info["episode"].items():
-                            eval_metrics[k].append(v)
+                if "final_info" in info:
+                    if isinstance(info["final_info"], dict):
+                        for k, v in info["final_info"]["episode"].items():
+                            eval_metrics[k].append(v.float().cpu().numpy())
+                    else:
+                        for final_info in info["final_info"]:
+                            for k, v in final_info["episode"].items():
+                                eval_metrics[k].append(v)
+                elif "episode" in info:
+                    for k, v in info["episode"].items():
+                        eval_metrics[k].append(v.float().cpu().numpy() if hasattr(v, 'float') else v)
                 # new episodes begin
                 eps_count += num_envs
                 ts = 0

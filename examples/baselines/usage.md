@@ -62,14 +62,29 @@ python example.py
 
 ## 2. 模仿学习（需要先下载 demo 数据）
 
-### 2.1 下载 demo 数据
+### 2.1 下载 demo 数据并预处理
 
 ```bash
-# 下载指定任务的 demo（state-based）
-python -m mani_skill.utils.download_demo -e "PickCube-v1" -o state
+# 1. 下载原始 demo（默认无观测、pd_joint_pos 控制模式）
+python -m mani_skill.utils.download_demo PickCube-v1
+# 保存到 ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.h5
 
-# demo 保存位置
-# ~/.maniskill/demos/<env_id>/motionplanning/trajectory.state.<control_mode>.physx_cpu.h5
+# 2. 重放轨迹，生成带观测 + 目标控制模式的数据
+# state-based（用于 ACT/BC/Diffusion Policy）
+python -m mani_skill.trajectory.replay_trajectory \
+  --traj-path ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.h5 \
+  --obs-mode state --target-control-mode pd_ee_delta_pos \
+  -b physx_cpu --save-traj
+
+# rgb-based（用于 train_rgbd.py）
+python -m mani_skill.trajectory.replay_trajectory \
+  --traj-path ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.h5 \
+  --obs-mode rgb --target-control-mode pd_ee_delta_pos \
+  -b physx_cpu --save-traj
+
+# 生成的文件：
+# ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state.pd_ee_delta_pos.physx_cpu.h5
+# ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.rgb.pd_ee_delta_pos.physx_cpu.h5
 ```
 
 ### 2.2 ACT（Action Chunking with Transformers）
@@ -83,10 +98,12 @@ python train.py --env-id PickCube-v1 \
   --control-mode "pd_ee_delta_pos" --sim-backend "physx_cpu" \
   --num_demos 100 --max_episode_steps 100 --total_iters 30000
 
-# 训练（visual-based，RGB 图像输入）
+# 训练（visual-based，RGB 图像输入，8GB GPU 需减少评估环境）
 python train_rgbd.py --env-id PickCube-v1 \
   --demo-path ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.rgb.pd_ee_delta_pos.physx_cpu.h5 \
-  --control-mode "pd_ee_delta_pos" --num_demos 100 --total_iters 30000
+  --control-mode "pd_ee_delta_pos" --sim-backend physx_cpu \
+  --no-include-depth --num_demos 100 --total_iters 30000 \
+  --max-episode-steps 100 --num-eval-envs 2 --batch-size 64
 
 # 模型保存在 runs/<run_name>/checkpoints/
 ```
